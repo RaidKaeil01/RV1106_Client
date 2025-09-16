@@ -1,0 +1,129 @@
+// video.h - 视频处理模块头文件，封装推理、采集、编码、推流等功能，支持线程化
+#ifndef VIDEO_H
+#define VIDEO_H
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <pthread.h>
+#include <time.h>
+#include "rtsp_demo.h"
+#include "luckfox_mpi.h"
+#include "yolov5.h"
+#include <vector>
+#include "common.h"
+
+// 前向声明
+class Control;
+
+// Video类：封装视频采集、推理、编码、推流等功能，支持独立线程运行
+class Video {
+public:
+    // 构造函数，设置分辨率和模型输入尺寸
+    Video(int width, int height, int model_width, int model_height);
+    // 析构函数，自动释放资源
+    ~Video();
+
+    // 初始化所有资源（模型、ISP、VI、VENC、RTSP等）
+    bool init();
+    // 启动主循环线程
+    bool start();
+    // 停止主循环线程并清理资源
+    void stop();
+    // 开启AI识别
+    void startAI();
+    // 关闭AI识别
+    void stopAI();
+    // 开启区域识别
+    void startAreaDetect();
+    // 关闭区域识别
+    void stopAreaDetect();
+    // 开启对象识别
+    void startObjectDetect();
+    // 关闭对象识别
+    void stopObjectDetect();
+    // 开启RTSP推流
+    void startRTSP();
+    // 关闭RTSP推流
+    void stopRTSP();
+    // 获取当前矩形框信息
+    void getRectInfo(const RectInfo& info);
+    // 获取对象列表
+    void getObjectList(const std::vector<int>& objList);
+    // 设置Control对象指针
+    void setControl(Control* control);
+    // 设置检测结果发送间隔（秒）
+    void setSendInterval(int interval);
+         
+
+private:
+    // 线程入口函数
+    static void* threadFunc(void* arg);
+    // 主循环，采集、推理、编码、推流
+    void mainLoop();
+    // letterbox处理，适配模型输入
+    cv::Mat letterbox(cv::Mat input);
+    // 坐标映射回原图
+    void mapCoordinates(int *x, int *y);
+    // 构建检测结果汇总字符串
+    std::string buildDetectionSummary();
+
+    // 图像和模型相关参数
+    int width_;
+    int height_;
+    int model_width_;
+    int model_height_;
+    float scale_;
+    int leftPadding_;
+    int topPadding_;
+
+    // rknn推理相关
+    rknn_app_context_t rknn_app_ctx_;
+    object_detect_result_list od_results_;
+    char text_[16];
+
+    // 视频采集/编码相关
+    VENC_STREAM_S stFrame_;
+    RK_U32 H264_TimeRef_;
+    VIDEO_FRAME_INFO_S stViFrame_;
+    MB_POOL src_Pool_;
+    MB_BLK src_Blk_;
+    VIDEO_FRAME_INFO_S h264_frame_;
+    cv::Mat frame_;
+    unsigned char* data_;
+
+    // RTSP相关
+    rtsp_demo_handle g_rtsplive_;
+    rtsp_session_handle g_rtsp_session_;
+
+    // 线程相关
+    pthread_t thread_;
+    bool running_;
+    bool ai_enable_;      // AI识别开关标志
+    bool area_enable_;    // 区域识别开关标志
+    bool obj_enable_;     // 对象识别开关标志
+    bool rtsp_enable_;    // RTSP推流开关标志
+
+    // 矩形框信息
+    RectInfo video_rectInfo;
+    // 对象列表
+    std::vector<int> video_objList;
+    // Control对象指针
+    Control* control_;
+    
+    // 时间控制相关（限制发送频率）
+    time_t last_send_time_;        // 上次发送时间
+    int send_interval_;            // 发送间隔（秒），可动态调整
+    static const int DEFAULT_SEND_INTERVAL = 1; // 默认发送间隔（秒）
+    
+    // 当前帧检测结果存储
+    struct DetectionInfo {
+        int cls_id;
+        std::string cls_name;
+        int x, y, w, h;
+        float confidence;
+    };
+    std::vector<DetectionInfo> current_detections_;
+};
+
+#endif // VIDEO_H

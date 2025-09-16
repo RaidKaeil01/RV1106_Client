@@ -1,0 +1,149 @@
+// control.cc - 控制命令解析与分发模块实现
+#include "control.h"
+#include "tcp.h"
+#include <stdio.h>
+#include <sstream>
+#include <iomanip>
+
+// 构造函数，保存Servo、Video和TcpClient指针副本
+Control::Control(Servo* servoPtr, Video* videoPtr, TcpClient* tcpPtr)
+    : m_servo(servoPtr ? new Servo(*servoPtr) : nullptr), m_video(videoPtr), m_tcp(tcpPtr) {}
+
+// 解析命令字符串并分发
+void Control::parseAndDispatch(const std::string& cmd) {
+    int deviceId = 0, operationId = 0, operationValue = 0;
+    // 支持格式: DEVICE_1:OP_1:VALUE_5
+    if (sscanf(cmd.c_str(), "DEVICE_%d:OP_%d:VALUE_%d", &deviceId, &operationId, &operationValue) == 3) {
+        if (deviceId == 1 && m_servo) {
+            if (operationId >= 1 && operationId <= 4) {
+                // 1=UP, 2=DOWN, 3=LEFT, 4=RIGHT
+                int direction = -1;
+                switch (operationId) {
+                    case 1: direction = SERVO_UP; break;
+                    case 2: direction = SERVO_DOWN; break;
+                    case 3: direction = SERVO_LEFT; break;
+                    case 4: direction = SERVO_RIGHT; break;
+                }
+                // 默认垂直舵机UP/DOWN，水平舵机LEFT/RIGHT
+                int servo_type = (direction == SERVO_LEFT || direction == SERVO_RIGHT) ? SERVO_HORIZONTAL : SERVO_VERTICAL;
+                m_servo->control(servo_type, direction, operationValue);
+            } else if (operationId == 5) {
+                m_servo->reset();
+            } else {
+                printf("未支持的operationId: %d\n", operationId);
+            }
+        } else if (deviceId == 2 && m_video) {
+            if (operationId == 6) {
+                if (operationValue == 1) {
+                    m_video->startAI();
+                    printf("AI识别已开启\n");
+                } else if (operationValue == 0) {
+                    m_video->stopAI();
+                    printf("AI识别已关闭\n");
+                } else {
+                    printf("未支持的operationValue: %d\n", operationValue);
+                }
+            } else if (operationId == 7) {
+                if (operationValue == 1) {
+                    m_video->startAreaDetect();
+                    printf("区域识别已开启\n");
+                } else if (operationValue == 0) {
+                    m_video->stopAreaDetect();
+                    printf("区域识别已关闭\n");
+                } else {
+                    printf("未支持的operationValue: %d\n", operationValue);
+                }
+            } else if (operationId == 8) {
+                if (operationValue == 1) {
+                    m_video->startObjectDetect();
+                    printf("对象识别已开启\n");
+                } else if (operationValue == 0) {
+                    m_video->stopObjectDetect();
+                    printf("对象识别已关闭\n");
+                } else {
+                    printf("未支持的operationValue: %d\n", operationValue);
+                }
+            } else if (operationId == 9) {
+                if (operationValue == 1) {
+                    m_video->startRTSP();
+                    printf("RTSP推流已开启\n");
+                } else if (operationValue == 0) {
+                    m_video->stopRTSP();
+                    printf("RTSP推流已关闭\n");
+                } else {
+                    printf("未支持的operationValue: %d\n", operationValue);
+                }
+            } else {
+                printf("未支持的operationId: %d\n", operationId);
+            }
+        } else {
+            printf("未支持的deviceId: %d\n", deviceId);
+        }
+    } else {
+        printf("命令格式错误: %s\n", cmd.c_str());
+    }
+}
+
+// 解析矩形框数据，格式: RECT:x:y:w:h
+void Control::parseRectInfo(const std::string& rectCmd) {
+    float fx = 0, fy = 0, fw = 0, fh = 0;
+    if (sscanf(rectCmd.c_str(), "RECT:%f:%f:%f:%f", &fx, &fy, &fw, &fh) == 4) {
+        printf("收到归一化矩形框数据: x=%.3f, y=%.3f, w=%.3f, h=%.3f\n", fx, fy, fw, fh);
+        m_rectInfo.x = fx;
+        m_rectInfo.y = fy;
+        m_rectInfo.w = fw;
+        m_rectInfo.h = fh;
+        // 更新Video中的矩形框信息
+        m_video->getRectInfo(m_rectInfo);
+    } else {
+        printf("RECT命令格式错误: %s\n", rectCmd.c_str());
+    }
+}
+
+// 解析对象列表数据
+void Control::parseObjList(const std::string& listCmd) {
+    m_objList.clear();
+    // 解析LIST:0,1,2,3格式
+    size_t pos = listCmd.find(":");
+    if (pos == std::string::npos || pos + 1 >= listCmd.size()) {
+        printf("LIST命令格式错误: %s\n", listCmd.c_str());
+        return;
+    }
+    std::string nums = listCmd.substr(pos + 1);
+    size_t start = 0, end = 0;
+    while ((end = nums.find(',', start)) != std::string::npos) {
+        int id = atoi(nums.substr(start, end - start).c_str());
+        m_objList.push_back(id);
+        start = end + 1;
+    }
+    // 最后一个数字
+    if (start < nums.size()) {
+        int id = atoi(nums.substr(start).c_str());
+        m_objList.push_back(id);
+    }
+    
+    // 更新Video中的对象列表
+    m_video->getObjectList(m_objList);
+
+    // 打印解析结果
+    printf("选中对象ID及类别: ");
+    for (size_t i = 0; i < m_objList.size(); ++i) {
+        int id = m_objList[i];
+        const char* name = (id >= 0 && id < 80) ? COCO_CLASS_NAMES[id] : "未知";
+        printf("%d:%s ", id, name);
+    }
+    printf("\n");
+}
+
+// 处理汇总的检测结果（从Video模块接收）
+void Control::onDetectionSummary(const std::string& detectionSummary) {
+    // 直接发送汇总的检测结果
+    if (m_tcp && m_tcp->isConnected()) {
+        m_tcp->sendData(detectionSummary);
+    } else {
+        printf("TCP未连接，无法发送检测结果汇总: %s\n", detectionSummary.c_str());
+    }
+}
+
+
+
