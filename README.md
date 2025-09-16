@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-
-=======
-<<<<<<< HEAD
 # Intelligent_Recognition_Client
 
 > 基于 Rockchip RKNN 的智能识别客户端：集视频采集、目标检测、TCP 通信与云台控制于一体，适配 RK 平台嵌入式设备。
@@ -69,7 +65,7 @@ git clone https://gitee.com/LuckfoxTECH/luckfox-pico.git
 
 ### 3) 拉取本工程
 ```bash
-git clone https://github.com/Tomorrow-star-618/Intelligent_Recognition_Client.git
+git clone https://github.com/RaidKaeil01/RV1106_Client.git
 ```
 
 ### 4) 进入代码并修改配置
